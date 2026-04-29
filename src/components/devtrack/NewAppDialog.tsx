@@ -56,7 +56,11 @@ export function NewAppDialog() {
       setErrors(fe);
       return;
     }
-    appsApi.create(parsed.data);
+    appsApi.create({
+      name: parsed.data.name as string,
+      developer: parsed.data.developer as string,
+      platform: parsed.data.platform as Platform,
+    });
     toast.success(`Created "${parsed.data.name}" — tracking started`);
     reset();
     setOpen(false);
