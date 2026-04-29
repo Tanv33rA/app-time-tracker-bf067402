@@ -21,14 +21,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { appsApi, useDevelopers } from "@/lib/devtrack-store";
-import type { Platform } from "@/lib/devtrack-types";
-import { PLATFORMS } from "@/lib/devtrack-types";
+import type { Platform, TaskType } from "@/lib/devtrack-types";
+import { PLATFORMS, TASK_TYPES } from "@/lib/devtrack-types";
 import { toast } from "sonner";
 
 const schema = z.object({
   name: z.string().trim().min(1, "App name required").max(80, "Max 80 chars"),
   developer: z.string().trim().min(1, "Developer name required").max(60, "Max 60 chars"),
   platform: z.enum(["iOS", "Android", "Web"]),
+  taskType: z.enum(["First Release", "Update"]),
 });
 
 export function NewAppDialog() {
@@ -37,18 +38,20 @@ export function NewAppDialog() {
   const [name, setName] = useState("");
   const [developer, setDeveloper] = useState<string>("");
   const [platform, setPlatform] = useState<Platform>("iOS");
+  const [taskType, setTaskType] = useState<TaskType>("First Release");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function reset() {
     setName("");
     setDeveloper("");
     setPlatform("iOS");
+    setTaskType("First Release");
     setErrors({});
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const parsed = schema.safeParse({ name, developer, platform });
+    const parsed = schema.safeParse({ name, developer, platform, taskType });
     if (!parsed.success) {
       const fe: Record<string, string> = {};
       parsed.error.issues.forEach((i) => {
@@ -62,6 +65,7 @@ export function NewAppDialog() {
         name: parsed.data.name as string,
         developer: parsed.data.developer as string,
         platform: parsed.data.platform as Platform,
+        taskType: parsed.data.taskType as TaskType,
       });
       toast.success(`Created "${parsed.data.name}" — tracking started`);
       reset();
@@ -143,6 +147,22 @@ export function NewAppDialog() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Task</Label>
+            <Select value={taskType} onValueChange={(v) => setTaskType(v as TaskType)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TASK_TYPES.map((task) => (
+                  <SelectItem key={task} value={task}>
+                    {task}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.taskType && <p className="text-xs text-destructive">{errors.taskType}</p>}
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setOpen(false)}>

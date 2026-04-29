@@ -85,8 +85,8 @@ const Index = () => {
             Track <span className="text-gradient-primary">when, how long,</span> and what's shipping.
           </h2>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            A focused dashboard for monitoring app development — start times, live duration, and status.
-            No tasks, no boards, no noise.
+            A focused dashboard for monitoring app development tasks - start times, live duration,
+            status, and developer ownership.
           </p>
         </section>
 

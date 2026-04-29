@@ -13,6 +13,7 @@ export function exportAppsCsv(apps: AppItem[]) {
   const headers = [
     "Name",
     "Developer",
+    "Task",
     "Platform",
     "Status",
     "Started",
@@ -26,6 +27,7 @@ export function exportAppsCsv(apps: AppItem[]) {
     return [
       a.name,
       a.developer,
+      a.taskType,
       a.platform,
       a.status,
       format(a.createdAt, "yyyy-MM-dd HH:mm"),

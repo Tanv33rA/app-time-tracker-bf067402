@@ -62,7 +62,14 @@ export function Analytics({ apps }: { apps: AppItem[] }) {
 
   const byDeveloper = useMemo(() => {
     const m = new Map<string, number>();
-    apps.forEach((a) => m.set(a.developer, (m.get(a.developer) ?? 0) + totalMs(a, now)));
+    apps.forEach((a) => {
+      a.sessions.forEach((s) => {
+        const owner = s.developer ?? a.developer;
+        const end = s.end ?? (a.status === "Active" ? now : s.start);
+        const ms = Math.max(0, end - s.start);
+        m.set(owner, (m.get(owner) ?? 0) + ms);
+      });
+    });
     return Array.from(m.entries())
       .map(([name, ms]) => ({ name, hours: hours(ms), ms }))
       .sort((a, b) => b.ms - a.ms)

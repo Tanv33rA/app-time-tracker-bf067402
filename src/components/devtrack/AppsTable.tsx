@@ -41,6 +41,7 @@ export function AppsTable({ apps }: Props) {
             <TableRow className="hover:bg-transparent">
               <TableHead className="w-[26%]">App</TableHead>
               <TableHead>Developer</TableHead>
+              <TableHead>Task</TableHead>
               <TableHead>Platform</TableHead>
               <TableHead>Started</TableHead>
               <TableHead>Time spent</TableHead>
@@ -64,6 +65,7 @@ export function AppsTable({ apps }: Props) {
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">{app.developer}</TableCell>
+                <TableCell className="text-muted-foreground">{app.taskType}</TableCell>
                 <TableCell>
                   <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                     <PlatformIcon platform={app.platform} />

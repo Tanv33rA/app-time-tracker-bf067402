@@ -12,7 +12,7 @@ import { PlatformIcon } from "./PlatformIcon";
 import { LiveDuration } from "./LiveDuration";
 import { formatDuration } from "@/lib/devtrack-store";
 import type { ActivityType, AppItem } from "@/lib/devtrack-types";
-import { CheckCircle2, Pause, Play, Plus, RotateCcw } from "lucide-react";
+import { CheckCircle2, Pause, Play, Plus, RotateCcw, UserRoundPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<ActivityType, React.ComponentType<{ className?: string }>> = {
@@ -21,6 +21,8 @@ const ICONS: Record<ActivityType, React.ComponentType<{ className?: string }>> =
   resumed: Play,
   completed: CheckCircle2,
   reopened: RotateCcw,
+  task_assigned: UserRoundPlus,
+  developer_changed: UserRoundPlus,
 };
 
 const COLORS: Record<ActivityType, string> = {
@@ -29,6 +31,8 @@ const COLORS: Record<ActivityType, string> = {
   resumed: "text-success bg-success/15",
   completed: "text-primary bg-primary/15",
   reopened: "text-muted-foreground bg-muted",
+  task_assigned: "text-success bg-success/15",
+  developer_changed: "text-success bg-success/15",
 };
 
 interface Props {
@@ -56,6 +60,8 @@ export function ActivityDrawer({ app, open, onOpenChange }: Props) {
                   </span>
                   <span>•</span>
                   <span>{app.developer}</span>
+                  <span>•</span>
+                  <span>{app.taskType}</span>
                   <span>•</span>
                   <span>Started {format(app.createdAt, "MMM d, yyyy")}</span>
                 </SheetDescription>
@@ -96,11 +102,16 @@ export function ActivityDrawer({ app, open, onOpenChange }: Props) {
                           <Icon className="h-3 w-3" />
                         </span>
                         <div className="flex flex-col">
-                          <span className="text-sm capitalize">{ev.type}</span>
+                          <span className="text-sm capitalize">{ev.type.replaceAll("_", " ")}</span>
                           <span className="text-xs text-muted-foreground">
                             {format(ev.at, "MMM d, yyyy 'at' h:mm a")} ·{" "}
                             {formatDistanceToNow(ev.at, { addSuffix: true })}
                           </span>
+                          {(ev.note || ev.taskType || ev.developer) && (
+                            <span className="text-xs text-muted-foreground">
+                              {[ev.note, ev.taskType, ev.developer].filter(Boolean).join(" · ")}
+                            </span>
+                          )}
                         </div>
                       </li>
                     );

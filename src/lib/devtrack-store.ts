@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import type { AppItem, Platform } from "./devtrack-types";
+import type { AppItem, Platform, TaskType } from "./devtrack-types";
 
 export interface DeveloperItem {
   id: string;
@@ -90,7 +90,7 @@ export function useDevelopers() {
 }
 
 export const appsApi = {
-  async create(input: { name: string; platform: Platform; developer: string }) {
+  async create(input: { name: string; platform: Platform; developer: string; taskType: TaskType }) {
     init();
     const name = input.name.trim();
     const res = await fetch("/api/apps", {
@@ -100,6 +100,7 @@ export const appsApi = {
         name,
         platform: input.platform,
         developer: input.developer.trim(),
+        taskType: input.taskType,
       }),
     });
     if (!res.ok) throw new Error(await parseErrorMessage(res));
@@ -120,6 +121,22 @@ export const appsApi = {
   async reopen(id: string) {
     init();
     await postAction(`/api/apps/${id}/reopen`);
+  },
+  async startNextTask(id: string, input: { taskType: TaskType; developer: string }) {
+    init();
+    const res = await fetch(`/api/apps/${id}/start-next-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskType: input.taskType,
+        developer: input.developer.trim(),
+      }),
+    });
+    if (res.status === 404) {
+      throw new Error("Next-task endpoint not found. Restart the API server (npm run api or npm run dev:full).");
+    }
+    if (!res.ok) throw new Error(await parseErrorMessage(res));
+    await syncFromServer();
   },
   async remove(id: string) {
     init();

@@ -14,6 +14,7 @@ const dbPath = path.join(dataDir, "devtrack.db");
 fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(dbPath);
+const VALID_TASK_TYPES = ["First Release", "Update"];
 
 function normalizeAppName(name) {
   return String(name).trim().toLowerCase().replace(/\s+/g, " ");
@@ -50,9 +51,59 @@ function createSchema() {
       created_at INTEGER NOT NULL,
       completed_at INTEGER,
       sessions_json TEXT NOT NULL,
-      activity_json TEXT NOT NULL
+      activity_json TEXT NOT NULL,
+      current_task_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      task_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS task_assignments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      developer_id TEXT NOT NULL,
+      assigned_at INTEGER NOT NULL,
+      unassigned_at INTEGER,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (developer_id) REFERENCES developers(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS work_sessions (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      developer_id TEXT NOT NULL,
+      start_at INTEGER NOT NULL,
+      end_at INTEGER,
+      FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+      FOREIGN KEY (developer_id) REFERENCES developers(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS activity_events (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      task_id TEXT,
+      type TEXT NOT NULL,
+      at INTEGER NOT NULL,
+      note TEXT,
+      meta_json TEXT,
+      FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
     );
   `);
+
+  const appColumns = db.prepare("PRAGMA table_info(apps)").all().map((c) => c.name);
+  if (!appColumns.includes("current_task_id")) {
+    db.exec("ALTER TABLE apps ADD COLUMN current_task_id TEXT");
+  }
 }
 
 function developerIdFromName(name) {
@@ -83,34 +134,119 @@ function getDevelopers() {
   return db.prepare("SELECT id, name FROM developers ORDER BY name ASC").all();
 }
 
-function parseRow(row) {
+function parseJsonArray(text) {
+  try {
+    const parsed = JSON.parse(text ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function addActivity(appId, taskId, type, at, note, meta) {
+  db.prepare(
+    `INSERT INTO activity_events (id, app_id, task_id, type, at, note, meta_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(uid(), appId, taskId ?? null, type, at, note ?? null, meta ? JSON.stringify(meta) : null);
+}
+
+function closeOpenSession(appId, now) {
+  db.prepare("UPDATE work_sessions SET end_at = ? WHERE app_id = ? AND end_at IS NULL").run(now, appId);
+}
+
+function getCurrentTask(appId) {
+  return db
+    .prepare(
+      `SELECT * FROM tasks
+       WHERE app_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`
+    )
+    .get(appId);
+}
+
+function getCurrentAssignment(taskId) {
+  if (!taskId) return null;
+  return db
+    .prepare(
+      `SELECT ta.*, d.name as developer_name
+       FROM task_assignments ta
+       JOIN developers d ON d.id = ta.developer_id
+       WHERE ta.task_id = ? AND ta.unassigned_at IS NULL
+       ORDER BY ta.assigned_at DESC
+       LIMIT 1`
+    )
+    .get(taskId);
+}
+
+function serializeApp(appRow) {
+  const tasks = db
+    .prepare("SELECT * FROM tasks WHERE app_id = ? ORDER BY created_at DESC")
+    .all(appRow.id);
+  const currentTask = tasks[0] ?? null;
+  const assignment = currentTask ? getCurrentAssignment(currentTask.id) : null;
+  const sessions = db
+    .prepare(
+      `SELECT ws.id, ws.start_at, ws.end_at, d.name as developer_name, t.task_type
+       FROM work_sessions ws
+       JOIN developers d ON d.id = ws.developer_id
+       JOIN tasks t ON t.id = ws.task_id
+       WHERE ws.app_id = ?
+       ORDER BY ws.start_at ASC`
+    )
+    .all(appRow.id)
+    .map((s) => ({
+      id: s.id,
+      start: s.start_at,
+      end: s.end_at,
+      developer: s.developer_name,
+      taskType: s.task_type,
+    }));
+  const activity = db
+    .prepare(
+      `SELECT ae.*, t.task_type
+       FROM activity_events ae
+       LEFT JOIN tasks t ON t.id = ae.task_id
+       WHERE ae.app_id = ?
+       ORDER BY ae.at ASC`
+    )
+    .all(appRow.id)
+    .map((ev) => {
+      const meta = ev.meta_json ? JSON.parse(ev.meta_json) : null;
+      return {
+        id: ev.id,
+        type: ev.type,
+        at: ev.at,
+        note: ev.note ?? undefined,
+        taskType: ev.task_type ?? meta?.taskType,
+        developer: meta?.developer,
+      };
+    });
   return {
-    id: row.id,
-    name: row.name,
-    platform: row.platform,
-    developer: row.developer,
-    status: row.status,
-    createdAt: row.created_at,
-    completedAt: row.completed_at,
-    sessions: JSON.parse(row.sessions_json),
-    activity: JSON.parse(row.activity_json),
+    id: appRow.id,
+    name: appRow.name,
+    platform: appRow.platform,
+    developer: assignment?.developer_name ?? appRow.developer,
+    taskType: currentTask?.task_type ?? "First Release",
+    status: appRow.status,
+    createdAt: appRow.created_at,
+    completedAt: appRow.completed_at,
+    sessions,
+    activity,
   };
 }
 
 function getApps() {
-  return db
-    .prepare("SELECT * FROM apps ORDER BY created_at DESC")
-    .all()
-    .map(parseRow);
+  return db.prepare("SELECT * FROM apps ORDER BY created_at DESC").all().map(serializeApp);
 }
 
 function insertApp(app) {
-  ensureDeveloperByName(app.developer);
+  const dev = ensureDeveloperByName(app.developer);
   db.prepare(
     `INSERT INTO apps
-    (id, name, normalized_name, platform, developer, status, created_at, completed_at, sessions_json, activity_json)
+    (id, name, normalized_name, platform, developer, status, created_at, completed_at, sessions_json, activity_json, current_task_id)
     VALUES
-    (@id, @name, @normalized_name, @platform, @developer, @status, @created_at, @completed_at, @sessions_json, @activity_json)`
+    (@id, @name, @normalized_name, @platform, @developer, @status, @created_at, @completed_at, @sessions_json, @activity_json, @current_task_id)`
   ).run({
     id: app.id,
     name: app.name,
@@ -122,39 +258,28 @@ function insertApp(app) {
     completed_at: app.completedAt,
     sessions_json: JSON.stringify(app.sessions),
     activity_json: JSON.stringify(app.activity),
+    current_task_id: null,
   });
-}
 
-function updateApp(app) {
+  const taskId = uid();
   db.prepare(
-    `UPDATE apps SET
-      name = @name,
-      normalized_name = @normalized_name,
-      platform = @platform,
-      developer = @developer,
-      status = @status,
-      created_at = @created_at,
-      completed_at = @completed_at,
-      sessions_json = @sessions_json,
-      activity_json = @activity_json
-    WHERE id = @id`
-  ).run({
-    id: app.id,
-    name: app.name,
-    normalized_name: normalizeAppName(app.name),
-    platform: app.platform,
-    developer: app.developer,
-    status: app.status,
-    created_at: app.createdAt,
-    completed_at: app.completedAt,
-    sessions_json: JSON.stringify(app.sessions),
-    activity_json: JSON.stringify(app.activity),
+    "INSERT INTO tasks (id, app_id, task_type, status, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(taskId, app.id, app.taskType, app.status, app.createdAt, app.completedAt);
+  db.prepare(
+    "INSERT INTO task_assignments (id, task_id, developer_id, assigned_at, unassigned_at) VALUES (?, ?, ?, ?, NULL)"
+  ).run(uid(), taskId, dev.id, app.createdAt);
+  app.sessions.forEach((s) => {
+    db.prepare(
+      "INSERT INTO work_sessions (id, app_id, task_id, developer_id, start_at, end_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(s.id, app.id, taskId, dev.id, s.start, s.end);
   });
+  app.activity.forEach((ev) => addActivity(app.id, taskId, ev.type, ev.at, ev.note, { developer: dev.name }));
+  db.prepare("UPDATE apps SET current_task_id = ? WHERE id = ?").run(taskId, app.id);
 }
 
 function findAppById(id) {
   const row = db.prepare("SELECT * FROM apps WHERE id = ?").get(id);
-  return row ? parseRow(row) : null;
+  return row ? serializeApp(row) : null;
 }
 
 function seedIfEmpty() {
@@ -176,6 +301,7 @@ function seedIfEmpty() {
       status,
       createdAt,
       completedAt,
+      taskType: "First Release",
       sessions: [{ id: uid(), start: createdAt, end: sessionEnd }],
       activity: [
         { id: uid(), type: "created", at: createdAt },
@@ -204,9 +330,48 @@ function backfillDevelopersFromApps() {
   names.forEach((row) => ensureDeveloperByName(row.developer));
 }
 
+function migrateLegacyToNormalized() {
+  const taskCount = db.prepare("SELECT COUNT(*) as count FROM tasks").get().count;
+  if (taskCount > 0) return;
+
+  const apps = db.prepare("SELECT * FROM apps ORDER BY created_at ASC").all();
+  const tx = db.transaction(() => {
+    apps.forEach((appRow) => {
+      const dev = ensureDeveloperByName(appRow.developer);
+      const taskId = uid();
+      const createdAt = appRow.created_at;
+      const completedAt = appRow.completed_at;
+      db.prepare(
+        "INSERT INTO tasks (id, app_id, task_type, status, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(taskId, appRow.id, "First Release", appRow.status, createdAt, completedAt);
+      db.prepare(
+        "INSERT INTO task_assignments (id, task_id, developer_id, assigned_at, unassigned_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(uid(), taskId, dev.id, createdAt, completedAt ?? null);
+      parseJsonArray(appRow.sessions_json).forEach((s) => {
+        db.prepare(
+          "INSERT INTO work_sessions (id, app_id, task_id, developer_id, start_at, end_at) VALUES (?, ?, ?, ?, ?, ?)"
+        ).run(s.id ?? uid(), appRow.id, taskId, dev.id, Number(s.start || createdAt), s.end ?? null);
+      });
+      parseJsonArray(appRow.activity_json).forEach((ev) => {
+        addActivity(
+          appRow.id,
+          taskId,
+          ev.type ?? "created",
+          Number(ev.at || createdAt),
+          ev.note ?? null,
+          { developer: dev.name, taskType: "First Release" }
+        );
+      });
+      db.prepare("UPDATE apps SET current_task_id = ? WHERE id = ?").run(taskId, appRow.id);
+    });
+  });
+  tx();
+}
+
 createSchema();
 seedIfEmpty();
 backfillDevelopersFromApps();
+migrateLegacyToNormalized();
 
 const app = express();
 app.use(cors());
@@ -251,8 +416,9 @@ app.post("/api/apps", (req, res) => {
   const name = String(req.body?.name ?? "").trim();
   const developer = String(req.body?.developer ?? "").trim();
   const platform = String(req.body?.platform ?? "").trim();
+  const taskType = String(req.body?.taskType ?? "First Release").trim();
 
-  if (!name || !developer || !["iOS", "Android", "Web"].includes(platform)) {
+  if (!name || !developer || !["iOS", "Android", "Web"].includes(platform) || !VALID_TASK_TYPES.includes(taskType)) {
     return res.status(400).json({ message: "Invalid app payload" });
   }
 
@@ -278,90 +444,156 @@ app.post("/api/apps", (req, res) => {
     status: "Active",
     createdAt: now,
     completedAt: null,
+    taskType,
     sessions: [{ id: uid(), start: now, end: null }],
-    activity: [{ id: uid(), type: "created", at: now }],
+    activity: [{ id: uid(), type: "created", at: now, taskType, developer }],
   };
   insertApp(appItem);
-  return res.status(201).json(appItem);
+  return res.status(201).json(findAppById(appItem.id));
 });
 
-function updateStatus(id, handler, res) {
-  const current = findAppById(id);
-  if (!current) return res.status(404).json({ message: "App not found" });
-  const next = handler(current);
-  if (!next) return res.status(400).json({ message: "Invalid status transition" });
-  updateApp(next);
-  return res.json(next);
+function withAppMutation(appId, res, fn) {
+  const appRow = db.prepare("SELECT * FROM apps WHERE id = ?").get(appId);
+  if (!appRow) return res.status(404).json({ message: "App not found" });
+  try {
+    const tx = db.transaction(() => fn(appRow));
+    tx();
+    return res.json(findAppById(appId));
+  } catch (error) {
+    return res
+      .status(400)
+      .json({ message: error instanceof Error ? error.message : "Invalid status transition" });
+  }
 }
 
 app.post("/api/apps/:id/pause", (req, res) =>
-  updateStatus(
-    req.params.id,
-    (appItem) => {
-      if (appItem.status !== "Active") return null;
-      const now = Date.now();
-      return {
-        ...appItem,
-        status: "Paused",
-        sessions: appItem.sessions.map((s) => (s.end == null ? { ...s, end: now } : s)),
-        activity: [...appItem.activity, { id: uid(), type: "paused", at: now }],
-      };
-    },
-    res
-  )
+  withAppMutation(req.params.id, res, (appRow) => {
+    if (appRow.status !== "Active") throw new Error("Invalid status transition");
+    const task = getCurrentTask(appRow.id);
+    if (!task) throw new Error("No task found");
+    const now = Date.now();
+    closeOpenSession(appRow.id, now);
+    db.prepare("UPDATE tasks SET status = ? WHERE id = ?").run("Paused", task.id);
+    db.prepare("UPDATE apps SET status = ? WHERE id = ?").run("Paused", appRow.id);
+    addActivity(appRow.id, task.id, "paused", now, null, null);
+  })
 );
 
 app.post("/api/apps/:id/resume", (req, res) =>
-  updateStatus(
-    req.params.id,
-    (appItem) => {
-      if (appItem.status !== "Paused") return null;
-      const now = Date.now();
-      return {
-        ...appItem,
-        status: "Active",
-        sessions: [...appItem.sessions, { id: uid(), start: now, end: null }],
-        activity: [...appItem.activity, { id: uid(), type: "resumed", at: now }],
-      };
-    },
-    res
-  )
+  withAppMutation(req.params.id, res, (appRow) => {
+    if (appRow.status !== "Paused") throw new Error("Invalid status transition");
+    const task = getCurrentTask(appRow.id);
+    if (!task) throw new Error("No task found");
+    const assignment = getCurrentAssignment(task.id);
+    if (!assignment) throw new Error("No active developer assignment");
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO work_sessions (id, app_id, task_id, developer_id, start_at, end_at) VALUES (?, ?, ?, ?, ?, NULL)"
+    ).run(uid(), appRow.id, task.id, assignment.developer_id, now);
+    db.prepare("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?").run("Active", task.id);
+    db.prepare("UPDATE apps SET status = ?, completed_at = NULL, developer = ? WHERE id = ?").run(
+      "Active",
+      null,
+      assignment.developer_name,
+      appRow.id
+    );
+    addActivity(appRow.id, task.id, "resumed", now, null, { developer: assignment.developer_name });
+  })
 );
 
 app.post("/api/apps/:id/complete", (req, res) =>
-  updateStatus(
-    req.params.id,
-    (appItem) => {
-      if (appItem.status === "Completed") return null;
-      const now = Date.now();
-      return {
-        ...appItem,
-        status: "Completed",
-        completedAt: now,
-        sessions: appItem.sessions.map((s) => (s.end == null ? { ...s, end: now } : s)),
-        activity: [...appItem.activity, { id: uid(), type: "completed", at: now }],
-      };
-    },
-    res
-  )
+  withAppMutation(req.params.id, res, (appRow) => {
+    if (appRow.status === "Completed") throw new Error("Invalid status transition");
+    const task = getCurrentTask(appRow.id);
+    if (!task) throw new Error("No task found");
+    const now = Date.now();
+    closeOpenSession(appRow.id, now);
+    db.prepare("UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?").run("Completed", now, task.id);
+    db.prepare("UPDATE task_assignments SET unassigned_at = ? WHERE task_id = ? AND unassigned_at IS NULL").run(
+      now,
+      task.id
+    );
+    db.prepare("UPDATE apps SET status = ?, completed_at = ? WHERE id = ?").run("Completed", now, appRow.id);
+    addActivity(appRow.id, task.id, "completed", now, null, null);
+  })
 );
 
 app.post("/api/apps/:id/reopen", (req, res) =>
-  updateStatus(
-    req.params.id,
-    (appItem) => {
-      if (appItem.status !== "Completed") return null;
-      const now = Date.now();
-      return {
-        ...appItem,
-        status: "Active",
-        completedAt: null,
-        sessions: [...appItem.sessions, { id: uid(), start: now, end: null }],
-        activity: [...appItem.activity, { id: uid(), type: "reopened", at: now }],
-      };
-    },
-    res
-  )
+  withAppMutation(req.params.id, res, (appRow) => {
+    if (appRow.status !== "Completed") throw new Error("Invalid status transition");
+    const task = getCurrentTask(appRow.id);
+    if (!task) throw new Error("No task found");
+    let assignment = getCurrentAssignment(task.id);
+    const now = Date.now();
+    if (!assignment) {
+      const currentDev = ensureDeveloperByName(appRow.developer);
+      db.prepare(
+        "INSERT INTO task_assignments (id, task_id, developer_id, assigned_at, unassigned_at) VALUES (?, ?, ?, ?, NULL)"
+      ).run(uid(), task.id, currentDev.id, now);
+      assignment = { developer_id: currentDev.id, developer_name: currentDev.name };
+    }
+    db.prepare(
+      "INSERT INTO work_sessions (id, app_id, task_id, developer_id, start_at, end_at) VALUES (?, ?, ?, ?, ?, NULL)"
+    ).run(uid(), appRow.id, task.id, assignment.developer_id, now);
+    db.prepare("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?").run("Active", task.id);
+    db.prepare("UPDATE apps SET status = ?, completed_at = ?, developer = ? WHERE id = ?").run(
+      "Active",
+      null,
+      assignment.developer_name,
+      appRow.id
+    );
+    addActivity(appRow.id, task.id, "reopened", now, null, { developer: assignment.developer_name });
+  })
+);
+
+app.post("/api/apps/:id/start-next-task", (req, res) =>
+  withAppMutation(req.params.id, res, (appRow) => {
+    const taskType = String(req.body?.taskType ?? "").trim();
+    const developerName = String(req.body?.developer ?? "").trim();
+    if (!VALID_TASK_TYPES.includes(taskType) || !developerName) {
+      throw new Error("Invalid next task payload");
+    }
+    const devExists = db
+      .prepare("SELECT id, name FROM developers WHERE normalized_name = ?")
+      .get(normalizeAppName(developerName));
+    if (!devExists) throw new Error("Selected developer does not exist");
+    const now = Date.now();
+    const currentTask = getCurrentTask(appRow.id);
+    if (currentTask && currentTask.status !== "Completed") {
+      closeOpenSession(appRow.id, now);
+      db.prepare("UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?").run(
+        "Completed",
+        now,
+        currentTask.id
+      );
+      db.prepare(
+        "UPDATE task_assignments SET unassigned_at = ? WHERE task_id = ? AND unassigned_at IS NULL"
+      ).run(now, currentTask.id);
+      addActivity(appRow.id, currentTask.id, "completed", now, "Auto-completed before next task", null);
+    }
+
+    const taskId = uid();
+    db.prepare(
+      "INSERT INTO tasks (id, app_id, task_type, status, created_at, completed_at) VALUES (?, ?, ?, ?, ?, NULL)"
+    ).run(taskId, appRow.id, taskType, "Active", now);
+    db.prepare(
+      "INSERT INTO task_assignments (id, task_id, developer_id, assigned_at, unassigned_at) VALUES (?, ?, ?, ?, NULL)"
+    ).run(uid(), taskId, devExists.id, now);
+    db.prepare(
+      "INSERT INTO work_sessions (id, app_id, task_id, developer_id, start_at, end_at) VALUES (?, ?, ?, ?, ?, NULL)"
+    ).run(uid(), appRow.id, taskId, devExists.id, now);
+    db.prepare(
+      "UPDATE apps SET status = ?, completed_at = NULL, developer = ?, current_task_id = ? WHERE id = ?"
+    ).run("Active", devExists.name, taskId, appRow.id);
+    addActivity(appRow.id, taskId, "task_assigned", now, `Task set to ${taskType}`, {
+      taskType,
+      developer: devExists.name,
+    });
+    addActivity(appRow.id, taskId, "reopened", now, "Started next task cycle", {
+      taskType,
+      developer: devExists.name,
+    });
+  })
 );
 
 app.delete("/api/apps/:id", (req, res) => {
