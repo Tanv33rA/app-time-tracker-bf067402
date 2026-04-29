@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Activity } from "lucide-react";
+import { Activity, LogOut } from "lucide-react";
 import { useApps, useDevelopers, totalMs } from "@/lib/devtrack-store";
 import { Filters, type FilterState } from "@/components/devtrack/Filters";
 import { AppsTable } from "@/components/devtrack/AppsTable";
@@ -8,10 +8,11 @@ import { Analytics } from "@/components/devtrack/Analytics";
 import { NewAppDialog } from "@/components/devtrack/NewAppDialog";
 import { AddDeveloperDialog } from "@/components/devtrack/AddDeveloperDialog";
 import { ThemeToggle } from "@/components/devtrack/ThemeToggle";
+import { Button } from "@/components/ui/button";
 
 const STATUS_ORDER = { Active: 0, Paused: 1, Completed: 2 } as const;
 
-const Index = () => {
+const Index = ({ onLogout }: { onLogout: () => void }) => {
   const apps = useApps();
   const developersList = useDevelopers();
   const [filters, setFilters] = useState<FilterState>({
@@ -77,6 +78,9 @@ const Index = () => {
             <ThemeToggle />
             <AddDeveloperDialog />
             <NewAppDialog />
+            <Button variant="soft" size="sm" onClick={onLogout}>
+              <LogOut className="h-4 w-4" /> Logout
+            </Button>
           </div>
         </div>
       </header>
