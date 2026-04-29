@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { appsApi } from "@/lib/devtrack-store";
+import { appsApi, useDevelopers } from "@/lib/devtrack-store";
 import type { Platform } from "@/lib/devtrack-types";
 import { PLATFORMS } from "@/lib/devtrack-types";
 import { toast } from "sonner";
@@ -32,9 +32,10 @@ const schema = z.object({
 });
 
 export function NewAppDialog() {
+  const developers = useDevelopers();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [developer, setDeveloper] = useState("");
+  const [developer, setDeveloper] = useState<string>("");
   const [platform, setPlatform] = useState<Platform>("iOS");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -45,7 +46,7 @@ export function NewAppDialog() {
     setErrors({});
   }
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     const parsed = schema.safeParse({ name, developer, platform });
     if (!parsed.success) {
@@ -56,14 +57,21 @@ export function NewAppDialog() {
       setErrors(fe);
       return;
     }
-    appsApi.create({
-      name: parsed.data.name as string,
-      developer: parsed.data.developer as string,
-      platform: parsed.data.platform as Platform,
-    });
-    toast.success(`Created "${parsed.data.name}" — tracking started`);
-    reset();
-    setOpen(false);
+    try {
+      await appsApi.create({
+        name: parsed.data.name as string,
+        developer: parsed.data.developer as string,
+        platform: parsed.data.platform as Platform,
+      });
+      toast.success(`Created "${parsed.data.name}" — tracking started`);
+      reset();
+      setOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not create app. Please try again.";
+      setErrors((prev) => ({ ...prev, name: message }));
+      toast.error(message);
+    }
   }
 
   return (
@@ -75,7 +83,7 @@ export function NewAppDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button variant="hero" size="lg">
+        <Button variant="hero" size="sm">
           <Plus className="h-4 w-4" />
           New App
         </Button>
@@ -101,14 +109,24 @@ export function NewAppDialog() {
             {errors.name && <p className="text-xs text-destructive">{errors.name}</p>}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="developer">Developer</Label>
-            <Input
-              id="developer"
-              placeholder="e.g. Maya Chen"
-              value={developer}
-              onChange={(e) => setDeveloper(e.target.value)}
-              maxLength={60}
-            />
+            <Label>Developer</Label>
+            <Select value={developer} onValueChange={setDeveloper}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select developer" />
+              </SelectTrigger>
+              <SelectContent>
+                {developers.map((d) => (
+                  <SelectItem key={d.id} value={d.name}>
+                    {d.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {developers.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Add a developer first from the top bar.
+              </p>
+            )}
             {errors.developer && <p className="text-xs text-destructive">{errors.developer}</p>}
           </div>
           <div className="space-y-1.5">
@@ -130,7 +148,7 @@ export function NewAppDialog() {
             <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="hero">
+            <Button type="submit" variant="hero" disabled={developers.length === 0}>
               Start tracking
             </Button>
           </DialogFooter>

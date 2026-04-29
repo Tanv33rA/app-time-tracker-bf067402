@@ -1,75 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import type { AppItem, Platform, Status } from "./devtrack-types";
+import type { AppItem, Platform } from "./devtrack-types";
 
-const KEY = "devtrack.apps.v1";
-
-const uid = () =>
-  typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36);
-
-function load(): AppItem[] {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return seed();
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return seed();
-    return parsed;
-  } catch {
-    return seed();
-  }
-}
-
-function save(apps: AppItem[]) {
-  localStorage.setItem(KEY, JSON.stringify(apps));
-}
-
-function seed(): AppItem[] {
-  const now = Date.now();
-  const day = 24 * 60 * 60 * 1000;
-  const mk = (
-    name: string,
-    platform: Platform,
-    developer: string,
-    daysAgo: number,
-    status: Status,
-    completedDaysAgo?: number,
-  ): AppItem => {
-    const createdAt = now - daysAgo * day;
-    const completedAt =
-      status === "Completed" && completedDaysAgo != null
-        ? now - completedDaysAgo * day
-        : null;
-    const sessionEnd =
-      status === "Active" ? null : completedAt ?? now - 1 * day;
-    return {
-      id: uid(),
-      name,
-      platform,
-      developer,
-      status,
-      createdAt,
-      completedAt,
-      sessions: [{ id: uid(), start: createdAt, end: sessionEnd }],
-      activity: [
-        { id: uid(), type: "created", at: createdAt },
-        ...(status === "Paused"
-          ? [{ id: uid(), type: "paused" as const, at: sessionEnd ?? now }]
-          : []),
-        ...(status === "Completed" && completedAt
-          ? [{ id: uid(), type: "completed" as const, at: completedAt }]
-          : []),
-      ],
-    };
-  };
-  return [
-    mk("Aurora Wallet", "iOS", "Maya Chen", 22, "Active"),
-    mk("Pulse Fitness", "Android", "Daniel Park", 14, "Active"),
-    mk("Lumen Notes", "Web", "Sara Ali", 40, "Completed", 5),
-    mk("Nimbus Chat", "iOS", "Daniel Park", 9, "Paused"),
-    mk("Forge Analytics", "Web", "Maya Chen", 60, "Completed", 12),
-    mk("Tide Travel", "Android", "Jonas Weber", 4, "Active"),
-  ];
+export interface DeveloperItem {
+  id: string;
+  name: string;
 }
 
 export function totalMs(app: AppItem, nowMs: number): number {
@@ -82,21 +16,51 @@ export function totalMs(app: AppItem, nowMs: number): number {
 // ---- store ----
 type Listener = () => void;
 let state: AppItem[] = [];
+let developersState: DeveloperItem[] = [];
 let initialized = false;
 const listeners = new Set<Listener>();
 
 function init() {
   if (initialized) return;
-  state = load();
   initialized = true;
+  void syncFromServer();
 }
 function emit() {
-  save(state);
   listeners.forEach((l) => l());
 }
 function setState(next: AppItem[]) {
   state = next;
   emit();
+}
+
+async function parseErrorMessage(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    if (typeof data?.message === "string") return data.message;
+  } catch {
+    // Ignore parse failure.
+  }
+  return `Request failed with status ${res.status}`;
+}
+
+async function syncFromServer() {
+  const [appsRes, developersRes] = await Promise.all([
+    fetch("/api/apps"),
+    fetch("/api/developers"),
+  ]);
+  if (!appsRes.ok) throw new Error(await parseErrorMessage(appsRes));
+  if (!developersRes.ok) throw new Error(await parseErrorMessage(developersRes));
+
+  const apps = (await appsRes.json()) as AppItem[];
+  const developers = (await developersRes.json()) as DeveloperItem[];
+  developersState = developers;
+  setState(apps);
+}
+
+async function postAction(url: string, method: "POST" | "DELETE" = "POST") {
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" } });
+  if (!res.ok) throw new Error(await parseErrorMessage(res));
+  await syncFromServer();
 }
 
 export function useApps() {
@@ -112,95 +76,67 @@ export function useApps() {
   return state;
 }
 
-export const appsApi = {
-  create(input: { name: string; platform: Platform; developer: string }) {
-    init();
-    const now = Date.now();
-    const item: AppItem = {
-      id: uid(),
-      name: input.name.trim(),
-      platform: input.platform,
-      developer: input.developer.trim(),
-      status: "Active",
-      createdAt: now,
-      completedAt: null,
-      sessions: [{ id: uid(), start: now, end: null }],
-      activity: [{ id: uid(), type: "created", at: now }],
+export function useDevelopers() {
+  init();
+  const [, force] = useState(0);
+  useEffect(() => {
+    const l = () => force((x) => x + 1);
+    listeners.add(l);
+    return () => {
+      listeners.delete(l);
     };
-    setState([item, ...state]);
-    return item;
-  },
-  pause(id: string) {
+  }, []);
+  return developersState;
+}
+
+export const appsApi = {
+  async create(input: { name: string; platform: Platform; developer: string }) {
     init();
-    const now = Date.now();
-    setState(
-      state.map((a) => {
-        if (a.id !== id || a.status !== "Active") return a;
-        const sessions = a.sessions.map((s) =>
-          s.end == null ? { ...s, end: now } : s,
-        );
-        return {
-          ...a,
-          status: "Paused",
-          sessions,
-          activity: [...a.activity, { id: uid(), type: "paused", at: now }],
-        };
+    const name = input.name.trim();
+    const res = await fetch("/api/apps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        platform: input.platform,
+        developer: input.developer.trim(),
       }),
-    );
+    });
+    if (!res.ok) throw new Error(await parseErrorMessage(res));
+    await syncFromServer();
   },
-  resume(id: string) {
+  async pause(id: string) {
     init();
-    const now = Date.now();
-    setState(
-      state.map((a) => {
-        if (a.id !== id || a.status !== "Paused") return a;
-        return {
-          ...a,
-          status: "Active",
-          sessions: [...a.sessions, { id: uid(), start: now, end: null }],
-          activity: [...a.activity, { id: uid(), type: "resumed", at: now }],
-        };
-      }),
-    );
+    await postAction(`/api/apps/${id}/pause`);
   },
-  complete(id: string) {
+  async resume(id: string) {
     init();
-    const now = Date.now();
-    setState(
-      state.map((a) => {
-        if (a.id !== id || a.status === "Completed") return a;
-        const sessions = a.sessions.map((s) =>
-          s.end == null ? { ...s, end: now } : s,
-        );
-        return {
-          ...a,
-          status: "Completed",
-          completedAt: now,
-          sessions,
-          activity: [...a.activity, { id: uid(), type: "completed", at: now }],
-        };
-      }),
-    );
+    await postAction(`/api/apps/${id}/resume`);
   },
-  reopen(id: string) {
+  async complete(id: string) {
     init();
-    const now = Date.now();
-    setState(
-      state.map((a) => {
-        if (a.id !== id || a.status !== "Completed") return a;
-        return {
-          ...a,
-          status: "Active",
-          completedAt: null,
-          sessions: [...a.sessions, { id: uid(), start: now, end: null }],
-          activity: [...a.activity, { id: uid(), type: "reopened", at: now }],
-        };
-      }),
-    );
+    await postAction(`/api/apps/${id}/complete`);
   },
-  remove(id: string) {
+  async reopen(id: string) {
     init();
-    setState(state.filter((a) => a.id !== id));
+    await postAction(`/api/apps/${id}/reopen`);
+  },
+  async remove(id: string) {
+    init();
+    await postAction(`/api/apps/${id}`, "DELETE");
+  },
+};
+
+export const developersApi = {
+  async create(input: { name: string }) {
+    init();
+    const res = await fetch("/api/developers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: input.name.trim() }),
+    });
+    if (!res.ok) throw new Error(await parseErrorMessage(res));
+    await syncFromServer();
   },
 };
 

@@ -1,20 +1,19 @@
 import { useMemo, useState } from "react";
-import { Activity, Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useApps, totalMs } from "@/lib/devtrack-store";
+import { Activity } from "lucide-react";
+import { useApps, useDevelopers, totalMs } from "@/lib/devtrack-store";
 import { Filters, type FilterState } from "@/components/devtrack/Filters";
 import { AppsTable } from "@/components/devtrack/AppsTable";
 import { StatCards } from "@/components/devtrack/StatCards";
 import { Analytics } from "@/components/devtrack/Analytics";
 import { NewAppDialog } from "@/components/devtrack/NewAppDialog";
+import { AddDeveloperDialog } from "@/components/devtrack/AddDeveloperDialog";
 import { ThemeToggle } from "@/components/devtrack/ThemeToggle";
-import { exportAppsCsv } from "@/lib/devtrack-export";
-import { toast } from "sonner";
 
 const STATUS_ORDER = { Active: 0, Paused: 1, Completed: 2 } as const;
 
 const Index = () => {
   const apps = useApps();
+  const developersList = useDevelopers();
   const [filters, setFilters] = useState<FilterState>({
     query: "",
     platform: "all",
@@ -24,8 +23,8 @@ const Index = () => {
   });
 
   const developers = useMemo(
-    () => Array.from(new Set(apps.map((a) => a.developer))).sort(),
-    [apps],
+    () => developersList.map((d) => d.name),
+    [developersList],
   );
 
   const filtered = useMemo(() => {
@@ -59,15 +58,6 @@ const Index = () => {
     return list;
   }, [apps, filters]);
 
-  function handleExport() {
-    if (filtered.length === 0) {
-      toast.error("Nothing to export with the current filters");
-      return;
-    }
-    exportAppsCsv(filtered);
-    toast.success(`Exported ${filtered.length} app${filtered.length !== 1 ? "s" : ""} to CSV`);
-  }
-
   return (
     <div className="min-h-screen">
       <header className="border-b border-border/60 bg-background/60 backdrop-blur-md sticky top-0 z-30">
@@ -83,9 +73,7 @@ const Index = () => {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <Button variant="soft" size="sm" onClick={handleExport}>
-              <Download className="h-4 w-4" /> Export CSV
-            </Button>
+            <AddDeveloperDialog />
             <NewAppDialog />
           </div>
         </div>
@@ -125,7 +113,7 @@ const Index = () => {
         </section>
 
         <footer className="pt-8 pb-4 text-center text-xs text-muted-foreground">
-          Devtrack — designed to stay simple. Data is stored locally in your browser.
+          Devtrack — designed to stay simple. Data is stored in a local SQLite database.
         </footer>
       </main>
     </div>

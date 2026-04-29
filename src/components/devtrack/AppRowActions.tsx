@@ -24,8 +24,11 @@ export function AppRowActions({ app, onShowHistory }: Props) {
           size="sm"
           variant="soft"
           onClick={() => {
-            appsApi.pause(app.id);
-            toast(`Paused "${app.name}"`);
+            void appsApi.pause(app.id).then(
+              () => toast(`Paused "${app.name}"`),
+              (error: unknown) =>
+                toast.error(error instanceof Error ? error.message : "Could not pause app"),
+            );
           }}
         >
           <Pause className="h-4 w-4" /> Pause
@@ -36,8 +39,11 @@ export function AppRowActions({ app, onShowHistory }: Props) {
           size="sm"
           variant="hero"
           onClick={() => {
-            appsApi.resume(app.id);
-            toast.success(`Resumed "${app.name}"`);
+            void appsApi.resume(app.id).then(
+              () => toast.success(`Resumed "${app.name}"`),
+              (error: unknown) =>
+                toast.error(error instanceof Error ? error.message : "Could not resume app"),
+            );
           }}
         >
           <Play className="h-4 w-4" /> Resume
@@ -48,8 +54,11 @@ export function AppRowActions({ app, onShowHistory }: Props) {
           size="sm"
           variant="soft"
           onClick={() => {
-            appsApi.complete(app.id);
-            toast.success(`Completed "${app.name}"`);
+            void appsApi.complete(app.id).then(
+              () => toast.success(`Completed "${app.name}"`),
+              (error: unknown) =>
+                toast.error(error instanceof Error ? error.message : "Could not complete app"),
+            );
           }}
         >
           <CheckCircle2 className="h-4 w-4" /> Complete
@@ -68,8 +77,11 @@ export function AppRowActions({ app, onShowHistory }: Props) {
           {app.status === "Completed" && (
             <DropdownMenuItem
               onClick={() => {
-                appsApi.reopen(app.id);
-                toast(`Reopened "${app.name}"`);
+                void appsApi.reopen(app.id).then(
+                  () => toast(`Reopened "${app.name}"`),
+                  (error: unknown) =>
+                    toast.error(error instanceof Error ? error.message : "Could not reopen app"),
+                );
               }}
             >
               <RotateCcw className="h-4 w-4" /> Reopen
@@ -79,8 +91,11 @@ export function AppRowActions({ app, onShowHistory }: Props) {
           <DropdownMenuItem
             className="text-destructive focus:text-destructive"
             onClick={() => {
-              appsApi.remove(app.id);
-              toast(`Deleted "${app.name}"`);
+              void appsApi.remove(app.id).then(
+                () => toast(`Deleted "${app.name}"`),
+                (error: unknown) =>
+                  toast.error(error instanceof Error ? error.message : "Could not delete app"),
+              );
             }}
           >
             <Trash2 className="h-4 w-4" /> Delete
