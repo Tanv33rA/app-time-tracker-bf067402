@@ -7,6 +7,7 @@ import { AppsTable } from "@/components/devtrack/AppsTable";
 import { StatCards } from "@/components/devtrack/StatCards";
 import { Analytics } from "@/components/devtrack/Analytics";
 import { NewAppDialog } from "@/components/devtrack/NewAppDialog";
+import { ThemeToggle } from "@/components/devtrack/ThemeToggle";
 import { exportAppsCsv } from "@/lib/devtrack-export";
 import { toast } from "sonner";
 
@@ -81,6 +82,7 @@ const Index = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Button variant="soft" size="sm" onClick={handleExport}>
               <Download className="h-4 w-4" /> Export CSV
             </Button>
