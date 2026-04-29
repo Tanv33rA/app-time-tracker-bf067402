@@ -10,8 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { appsApi, useDevelopers } from "@/lib/devtrack-store";
 import type { AppItem, TaskType } from "@/lib/devtrack-types";
-import { TASK_TYPES } from "@/lib/devtrack-types";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -23,18 +23,27 @@ interface Props {
 
 export function AppRowActions({ app, onShowHistory }: Props) {
   const developers = useDevelopers();
+  const developerOptions =
+    developers.some((d) => d.name === app.developer)
+      ? developers
+      : [{ id: `archived-${app.id}`, name: app.developer }, ...developers];
   const [open, setOpen] = useState(false);
-  const [taskType, setTaskType] = useState<TaskType>("Update");
+  const [taskType, setTaskType] = useState<TaskType>("");
   const [developer, setDeveloper] = useState<string>(app.developer);
 
   function submitNextTask() {
+    const cleanTask = taskType.trim();
+    if (!cleanTask) {
+      toast.error("Enter task name");
+      return;
+    }
     if (!developer) {
       toast.error("Select a developer");
       return;
     }
-    void appsApi.startNextTask(app.id, { taskType, developer }).then(
+    void appsApi.startNextTask(app.id, { taskType: cleanTask, developer }).then(
       () => {
-        toast.success(`Started ${taskType} for "${app.name}"`);
+        toast.success(`Started ${cleanTask} for "${app.name}"`);
         setOpen(false);
       },
       (error: unknown) =>
@@ -100,26 +109,15 @@ export function AppRowActions({ app, onShowHistory }: Props) {
             <DropdownMenuItem onClick={onShowHistory}>
               <History className="h-4 w-4" /> Activity & sessions
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => {
-                setDeveloper(app.developer);
-                setTaskType("Update");
-                setOpen(true);
-              }}
-            >
-              <RotateCcw className="h-4 w-4" /> Start next task
-            </DropdownMenuItem>
             {app.status === "Completed" && (
               <DropdownMenuItem
                 onClick={() => {
-                  void appsApi.reopen(app.id).then(
-                    () => toast(`Reopened "${app.name}"`),
-                    (error: unknown) =>
-                      toast.error(error instanceof Error ? error.message : "Could not reopen app"),
-                  );
+                  setDeveloper(app.developer);
+                  setTaskType("");
+                  setOpen(true);
                 }}
               >
-                <RotateCcw className="h-4 w-4" /> Reopen current task
+                <RotateCcw className="h-4 w-4" /> Start next task
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -145,19 +143,14 @@ export function AppRowActions({ app, onShowHistory }: Props) {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label>Task</Label>
-              <Select value={taskType} onValueChange={(v) => setTaskType(v as TaskType)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TASK_TYPES.map((task) => (
-                    <SelectItem key={task} value={task}>
-                      {task}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor={`next-task-${app.id}`}>Task name</Label>
+              <Input
+                id={`next-task-${app.id}`}
+                placeholder="e.g. Bug fixes, v2 redesign"
+                value={taskType}
+                onChange={(e) => setTaskType(e.target.value)}
+                maxLength={80}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Developer</Label>
@@ -166,7 +159,7 @@ export function AppRowActions({ app, onShowHistory }: Props) {
                   <SelectValue placeholder="Select developer" />
                 </SelectTrigger>
                 <SelectContent>
-                  {developers.map((d) => (
+                  {developerOptions.map((d) => (
                     <SelectItem key={d.id} value={d.name}>
                       {d.name}
                     </SelectItem>

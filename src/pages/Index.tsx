@@ -22,10 +22,12 @@ const Index = () => {
     sort: "recent",
   });
 
-  const developers = useMemo(
-    () => developersList.map((d) => d.name),
-    [developersList],
-  );
+  const developers = useMemo(() => {
+    const names = new Set<string>();
+    developersList.forEach((d) => names.add(d.name));
+    apps.forEach((a) => names.add(a.developer));
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [developersList, apps]);
 
   const filtered = useMemo(() => {
     const q = filters.query.trim().toLowerCase();
@@ -80,16 +82,6 @@ const Index = () => {
       </header>
 
       <main className="container space-y-8 py-8 animate-fade-in">
-        <section className="space-y-2">
-          <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-            Track <span className="text-gradient-primary">when, how long,</span> and what's shipping.
-          </h2>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            A focused dashboard for monitoring app development tasks - start times, live duration,
-            status, and developer ownership.
-          </p>
-        </section>
-
         <StatCards apps={apps} />
 
         <section className="space-y-4">
@@ -109,7 +101,7 @@ const Index = () => {
           <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Analytics
           </h3>
-          <Analytics apps={apps} />
+          <Analytics apps={apps} developers={developers} />
         </section>
 
         <footer className="pt-8 pb-4 text-center text-xs text-muted-foreground">

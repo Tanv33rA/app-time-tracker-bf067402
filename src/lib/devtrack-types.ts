@@ -1,7 +1,6 @@
-export type Platform = "iOS" | "Android" | "Web";
+export type Platform = "iOS" | "Android";
 export type Status = "Active" | "Paused" | "Completed";
-export type TaskType = "First Release" | "Update";
-export const TASK_TYPES: TaskType[] = ["First Release", "Update"];
+export type TaskType = string;
 
 export type ActivityType =
   | "created"
@@ -42,5 +41,5 @@ export interface AppItem {
   activity: ActivityEvent[];
 }
 
-export const PLATFORMS: Platform[] = ["iOS", "Android", "Web"];
+export const PLATFORMS: Platform[] = ["iOS", "Android"];
 export const STATUSES: Status[] = ["Active", "Paused", "Completed"];

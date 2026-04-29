@@ -13,6 +13,20 @@ export function totalMs(app: AppItem, nowMs: number): number {
   }, 0);
 }
 
+export function currentTaskMs(app: AppItem, nowMs: number): number {
+  if (app.sessions.length === 0) return 0;
+  let sum = 0;
+  // Current task is represented by the latest taskType on the app;
+  // walk backward and include only consecutive sessions from that task cycle.
+  for (let i = app.sessions.length - 1; i >= 0; i -= 1) {
+    const session = app.sessions[i];
+    if ((session.taskType ?? app.taskType) !== app.taskType) break;
+    const end = session.end ?? (app.status === "Active" ? nowMs : session.start);
+    sum += Math.max(0, end - session.start);
+  }
+  return sum;
+}
+
 // ---- store ----
 type Listener = () => void;
 let state: AppItem[] = [];
@@ -154,6 +168,10 @@ export const developersApi = {
     });
     if (!res.ok) throw new Error(await parseErrorMessage(res));
     await syncFromServer();
+  },
+  async archive(id: string) {
+    init();
+    await postAction(`/api/developers/${id}`, "DELETE");
   },
 };
 

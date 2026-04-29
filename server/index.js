@@ -14,7 +14,6 @@ const dbPath = path.join(dataDir, "devtrack.db");
 fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(dbPath);
-const VALID_TASK_TYPES = ["First Release", "Update"];
 
 function normalizeAppName(name) {
   return String(name).trim().toLowerCase().replace(/\s+/g, " ");
@@ -38,7 +37,8 @@ function createSchema() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       normalized_name TEXT NOT NULL UNIQUE,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      is_archived INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS apps (
@@ -104,6 +104,10 @@ function createSchema() {
   if (!appColumns.includes("current_task_id")) {
     db.exec("ALTER TABLE apps ADD COLUMN current_task_id TEXT");
   }
+  const developerColumns = db.prepare("PRAGMA table_info(developers)").all().map((c) => c.name);
+  if (!developerColumns.includes("is_archived")) {
+    db.exec("ALTER TABLE developers ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 function developerIdFromName(name) {
@@ -131,7 +135,9 @@ function ensureDeveloperByName(name) {
 }
 
 function getDevelopers() {
-  return db.prepare("SELECT id, name FROM developers ORDER BY name ASC").all();
+  return db
+    .prepare("SELECT id, name FROM developers WHERE is_archived = 0 ORDER BY name ASC")
+    .all();
 }
 
 function parseJsonArray(text) {
@@ -227,7 +233,7 @@ function serializeApp(appRow) {
     name: appRow.name,
     platform: appRow.platform,
     developer: assignment?.developer_name ?? appRow.developer,
-    taskType: currentTask?.task_type ?? "First Release",
+    taskType: currentTask?.task_type ?? "Task",
     status: appRow.status,
     createdAt: appRow.created_at,
     completedAt: appRow.completed_at,
@@ -369,7 +375,6 @@ function migrateLegacyToNormalized() {
 }
 
 createSchema();
-seedIfEmpty();
 backfillDevelopersFromApps();
 migrateLegacyToNormalized();
 
@@ -395,8 +400,14 @@ app.post("/api/developers", (req, res) => {
   if (name.length > 60) return res.status(400).json({ message: "Developer name max length is 60" });
 
   const normalized = normalizeAppName(name);
-  const existing = db.prepare("SELECT id, name FROM developers WHERE normalized_name = ?").get(normalized);
+  const existing = db
+    .prepare("SELECT id, name, is_archived FROM developers WHERE normalized_name = ?")
+    .get(normalized);
   if (existing) {
+    if (existing.is_archived) {
+      db.prepare("UPDATE developers SET is_archived = 0 WHERE id = ?").run(existing.id);
+      return res.status(200).json({ id: existing.id, name: existing.name });
+    }
     return res.status(409).json({ message: "A developer with this name already exists" });
   }
 
@@ -405,20 +416,29 @@ app.post("/api/developers", (req, res) => {
     name,
     normalized_name: normalized,
     created_at: Date.now(),
+    is_archived: 0,
   };
   db.prepare(
-    "INSERT INTO developers (id, name, normalized_name, created_at) VALUES (@id, @name, @normalized_name, @created_at)"
+    "INSERT INTO developers (id, name, normalized_name, created_at, is_archived) VALUES (@id, @name, @normalized_name, @created_at, @is_archived)"
   ).run(record);
   return res.status(201).json({ id: record.id, name: record.name });
+});
+
+app.delete("/api/developers/:id", (req, res) => {
+  const result = db
+    .prepare("UPDATE developers SET is_archived = 1 WHERE id = ? AND is_archived = 0")
+    .run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ message: "Developer not found" });
+  return res.status(204).send();
 });
 
 app.post("/api/apps", (req, res) => {
   const name = String(req.body?.name ?? "").trim();
   const developer = String(req.body?.developer ?? "").trim();
   const platform = String(req.body?.platform ?? "").trim();
-  const taskType = String(req.body?.taskType ?? "First Release").trim();
+  const taskType = String(req.body?.taskType ?? "").trim();
 
-  if (!name || !developer || !["iOS", "Android", "Web"].includes(platform) || !VALID_TASK_TYPES.includes(taskType)) {
+  if (!name || !developer || !taskType || !["iOS", "Android"].includes(platform)) {
     return res.status(400).json({ message: "Invalid app payload" });
   }
 
@@ -429,7 +449,7 @@ app.post("/api/apps", (req, res) => {
   }
 
   const devExists = db
-    .prepare("SELECT id FROM developers WHERE normalized_name = ?")
+    .prepare("SELECT id FROM developers WHERE normalized_name = ? AND is_archived = 0")
     .get(normalizeAppName(developer));
   if (!devExists) {
     return res.status(400).json({ message: "Selected developer does not exist" });
@@ -493,7 +513,6 @@ app.post("/api/apps/:id/resume", (req, res) =>
     db.prepare("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?").run("Active", task.id);
     db.prepare("UPDATE apps SET status = ?, completed_at = NULL, developer = ? WHERE id = ?").run(
       "Active",
-      null,
       assignment.developer_name,
       appRow.id
     );
@@ -550,26 +569,20 @@ app.post("/api/apps/:id/start-next-task", (req, res) =>
   withAppMutation(req.params.id, res, (appRow) => {
     const taskType = String(req.body?.taskType ?? "").trim();
     const developerName = String(req.body?.developer ?? "").trim();
-    if (!VALID_TASK_TYPES.includes(taskType) || !developerName) {
+    if (!taskType || !developerName) {
       throw new Error("Invalid next task payload");
     }
+    if (appRow.status !== "Completed") {
+      throw new Error("Current task must be completed before starting next task");
+    }
     const devExists = db
-      .prepare("SELECT id, name FROM developers WHERE normalized_name = ?")
+      .prepare("SELECT id, name FROM developers WHERE normalized_name = ? AND is_archived = 0")
       .get(normalizeAppName(developerName));
     if (!devExists) throw new Error("Selected developer does not exist");
     const now = Date.now();
     const currentTask = getCurrentTask(appRow.id);
-    if (currentTask && currentTask.status !== "Completed") {
-      closeOpenSession(appRow.id, now);
-      db.prepare("UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?").run(
-        "Completed",
-        now,
-        currentTask.id
-      );
-      db.prepare(
-        "UPDATE task_assignments SET unassigned_at = ? WHERE task_id = ? AND unassigned_at IS NULL"
-      ).run(now, currentTask.id);
-      addActivity(appRow.id, currentTask.id, "completed", now, "Auto-completed before next task", null);
+    if (!currentTask || currentTask.status !== "Completed") {
+      throw new Error("Current task must be completed before starting next task");
     }
 
     const taskId = uid();

@@ -22,14 +22,14 @@ import {
 } from "@/components/ui/select";
 import { appsApi, useDevelopers } from "@/lib/devtrack-store";
 import type { Platform, TaskType } from "@/lib/devtrack-types";
-import { PLATFORMS, TASK_TYPES } from "@/lib/devtrack-types";
+import { PLATFORMS } from "@/lib/devtrack-types";
 import { toast } from "sonner";
 
 const schema = z.object({
   name: z.string().trim().min(1, "App name required").max(80, "Max 80 chars"),
   developer: z.string().trim().min(1, "Developer name required").max(60, "Max 60 chars"),
-  platform: z.enum(["iOS", "Android", "Web"]),
-  taskType: z.enum(["First Release", "Update"]),
+  platform: z.enum(["iOS", "Android"]),
+  taskType: z.string().trim().min(1, "Task name required").max(80, "Max 80 chars"),
 });
 
 export function NewAppDialog() {
@@ -38,14 +38,14 @@ export function NewAppDialog() {
   const [name, setName] = useState("");
   const [developer, setDeveloper] = useState<string>("");
   const [platform, setPlatform] = useState<Platform>("iOS");
-  const [taskType, setTaskType] = useState<TaskType>("First Release");
+  const [taskType, setTaskType] = useState<TaskType>("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function reset() {
     setName("");
     setDeveloper("");
     setPlatform("iOS");
-    setTaskType("First Release");
+    setTaskType("");
     setErrors({});
   }
 
@@ -149,19 +149,14 @@ export function NewAppDialog() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Task</Label>
-            <Select value={taskType} onValueChange={(v) => setTaskType(v as TaskType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TASK_TYPES.map((task) => (
-                  <SelectItem key={task} value={task}>
-                    {task}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="task-name">Task name</Label>
+            <Input
+              id="task-name"
+              placeholder="e.g. First release, Bug fixes, v2 redesign"
+              value={taskType}
+              onChange={(e) => setTaskType(e.target.value)}
+              maxLength={80}
+            />
             {errors.taskType && <p className="text-xs text-destructive">{errors.taskType}</p>}
           </div>
           <DialogFooter>

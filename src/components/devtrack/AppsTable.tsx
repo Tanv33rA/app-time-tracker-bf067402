@@ -19,6 +19,10 @@ interface Props {
   apps: AppItem[];
 }
 
+function truncateAppName(name: string, max = 26) {
+  return name.length > max ? `${name.slice(0, max)}...` : name;
+}
+
 export function AppsTable({ apps }: Props) {
   const [historyId, setHistoryId] = useState<string | null>(null);
   const historyApp = apps.find((a) => a.id === historyId) ?? null;
@@ -58,7 +62,7 @@ export function AppsTable({ apps }: Props) {
               >
                 <TableCell className="font-medium">
                   <div className="flex flex-col">
-                    <span>{app.name}</span>
+                    <span title={app.name}>{truncateAppName(app.name, 26)}</span>
                     <span className="text-xs text-muted-foreground">
                       {app.sessions.length} session{app.sessions.length !== 1 ? "s" : ""}
                     </span>
@@ -76,7 +80,20 @@ export function AppsTable({ apps }: Props) {
                   {format(app.createdAt, "MMM d, yyyy")}
                 </TableCell>
                 <TableCell className="font-mono text-sm">
-                  <LiveDuration app={app} />
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-20 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Current task
+                      </span>
+                      <LiveDuration app={app} mode="current" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-20 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Total
+                      </span>
+                      <LiveDuration app={app} mode="total" />
+                    </div>
+                  </div>
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={app.status} />
