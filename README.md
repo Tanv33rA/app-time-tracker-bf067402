@@ -1,100 +1,214 @@
-# App Time Tracker
+# DevTrack
 
-- React + Vite frontend
-- Node.js + Express API
-- SQLite at `server/data/devtrack.db`
-
-The UI calls `/api/...` (relative URLs). In production you must serve the built `dist` folder **and** reverse-proxy `/api` to the Node API.
+**DevTrack** is an app development progress tracker: a React dashboard plus a small Node API and SQLite database. Use it to track apps (iOS / Android), assigned developers, task cycles, status, and time spent—without full project-management overhead.
 
 ---
 
-## Deploy on Windows Server (no Docker)
+# 🚀 DevTrack Deployment Guide (Windows Server)
 
-### 1. Prerequisites
+This project is deployed on Windows Server using:
 
-- [Node.js](https://nodejs.org/) LTS (20 or 22)
-- Git (to clone the repo)
-- [NSSM](https://nssm.cc/) — run the API as a Windows service
-- **Caddy** or **IIS** — serve static files + proxy `/api` to the API
+* **Node.js + Express** (API)
+* **React + Vite** (Frontend build in `dist`)
+* **SQLite** (local database)
+* **Caddy** (reverse proxy + static server)
+* **NSSM** (Windows services)
 
-### 2. Clone and build
+---
 
-```powershell
-cd C:\apps
-git clone <YOUR_REPO_URL> app-time-tracker
-cd app-time-tracker
-npm ci
-npm run build
+# 📁 Project Location
+
+```
+C:\apps\app-time-tracker-bf067402
 ```
 
-Confirm `dist` exists.
+---
 
-### 3. Run the API with NSSM
+# ⚙️ Services
 
-The API must start with **working directory = repo root** so `server/data` resolves correctly.
+Managed using **NSSM**:
 
-Example paths — change to match your server:
+| Service     | Purpose                          |
+| ----------- | -------------------------------- |
+| DevtrackApi | Runs Node backend                |
+| Caddy       | Serves frontend + proxies `/api` |
 
-- Repo: `C:\apps\app-time-tracker`
-- Node: `C:\Program Files\nodejs\node.exe`
+---
 
-Install the service:
+# 🌐 URLs
+
+* App: http://YOUR_SERVER_IP
+* API Health: http://YOUR_SERVER_IP/api/health
+
+---
+
+# 🔄 Update / Deploy Changes
+
+## ✅ Standard update flow
 
 ```powershell
-nssm install DevtrackApi "C:\Program Files\nodejs\node.exe" "C:\apps\app-time-tracker\server\index.js"
-nssm set DevtrackApi AppDirectory "C:\apps\app-time-tracker"
-nssm set DevtrackApi AppEnvironmentExtra "API_PORT=3001"
+# 1. Stop backend (IMPORTANT)
+nssm stop DevtrackApi
+
+# 2. Pull latest code
+git pull
+
+# 3. Install dependencies
+npm ci
+
+# 4. Build frontend
+npm run build
+
+# 5. Start backend
 nssm start DevtrackApi
 ```
 
-Verify on the server: open `http://127.0.0.1:3001/api/health` — you should see JSON with `"ok": true`.
+👉 No need to restart Caddy unless config changes
 
-Keep port **3001** bound to localhost only in production; users should hit **80/443** through the reverse proxy.
+---
 
-### 4. Reverse proxy
+# 🔁 Useful Commands
 
-#### Option A — Caddy (simple)
+## Check service status
 
-Install [Caddy for Windows](https://caddyserver.com/docs/install#windows). Example `Caddyfile` (adjust domain and paths):
+```powershell
+nssm status DevtrackApi
+nssm status Caddy
+```
 
-```caddy
-your-domain.com {
-    root * C:\apps\app-time-tracker\dist
-    file_server
-    try_files {path} /index.html
+## Restart services
 
-    handle_path /api/* {
+```powershell
+nssm restart DevtrackApi
+nssm restart Caddy
+```
+
+## Stop services
+
+```powershell
+nssm stop DevtrackApi
+nssm stop Caddy
+```
+
+---
+
+# 🗄️ Database
+
+SQLite file location:
+
+```
+C:\apps\app-time-tracker-bf067402\server\data\devtrack.db
+```
+
+## ⚠️ Backup this file regularly
+
+---
+
+# 🌍 Caddy Configuration
+
+File:
+
+```
+C:\caddy\Caddyfile
+```
+
+## Example config:
+
+```
+:80 {
+
+    handle /api/* {
         reverse_proxy 127.0.0.1:3001
+    }
+
+    handle {
+        root * C:\apps\app-time-tracker-bf067402\dist
+        try_files {path} /index.html
+        file_server
     }
 }
 ```
 
-Run Caddy as a service or scheduled task. Point DNS **A** record to the server. Allow **80** and **443** in Windows Firewall and your host’s panel.
+---
 
-#### Option B — IIS
+# 🧠 Important Notes
 
-1. Install IIS with static content.
-2. Install **URL Rewrite** and **Application Request Routing (ARR)**; in ARR, enable **proxy**.
-3. Site physical path = your `dist` folder.
-4. Add rules so `/api/*` is reverse-proxied to `http://127.0.0.1:3001/api/...`.
-5. Add a SPA fallback rule so client-side routes serve `index.html`.
+### ✅ Always stop API before updating
 
-### 5. Firewall
+* Prevents file lock issues (`EPERM`)
+* Especially important for `better-sqlite3`
 
-Allow inbound **TCP 80** (and **443** for HTTPS). Do not expose **3001** publicly if the proxy handles API traffic.
+---
 
-### 6. Data and backups
+### ❌ Do NOT deploy inside:
 
-SQLite file: `server/data/devtrack.db`. Back up this file regularly.
-
-### 7. Updates
-
-```powershell
-cd C:\apps\app-time-tracker
-git pull
-npm ci
-npm run build
-Restart-Service DevtrackApi
+```
+C:\Users\...
 ```
 
-Reload Caddy or recycle IIS as needed.
+✔ Always use:
+
+```
+C:\apps\
+```
+
+---
+
+### 🔄 When to restart what
+
+| Change           | Action               |
+| ---------------- | -------------------- |
+| Frontend (React) | `npm run build` only |
+| Backend (Node)   | Restart DevtrackApi  |
+| Caddyfile        | Restart Caddy        |
+
+---
+
+# 🐞 Troubleshooting
+
+## API not working
+
+```powershell
+nssm status DevtrackApi
+```
+
+## Caddy issues
+
+```powershell
+nssm status Caddy
+```
+
+## Port check
+
+```powershell
+netstat -ano | findstr :80
+netstat -ano | findstr :3001
+```
+
+---
+
+# 🚀 Architecture
+
+```
+Browser → Caddy (port 80)
+              ├── serves React (dist)
+              └── /api → Node (port 3001)
+                          └── SQLite DB
+```
+
+---
+
+# 🔐 Future Improvements
+
+* Add domain + HTTPS (Caddy auto SSL)
+* Automate DB backups
+* Add monitoring/logging
+
+---
+
+# ✅ Status
+
+Production-ready Windows deployment using services.
+No manual PowerShell required after setup.
+
+---
