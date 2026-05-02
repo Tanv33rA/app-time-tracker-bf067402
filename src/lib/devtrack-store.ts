@@ -70,6 +70,22 @@ async function tryReadJsonArray<T>(res: Response): Promise<T[] | null> {
   }
 }
 
+/** Read body as JSON object, or null if HTML or not a plain object. Avoids `res.json()` throwing on SPA HTML. */
+async function tryReadJsonObject<T extends Record<string, unknown>>(res: Response): Promise<T | null> {
+  const text = await res.text();
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("<")) return null;
+  try {
+    const data = JSON.parse(text) as unknown;
+    if (data !== null && typeof data === "object" && !Array.isArray(data)) {
+      return data as T;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 const proxyHint =
   "Check that all /api requests are reverse-proxied to the Node API (not the static site).";
 
@@ -210,8 +226,8 @@ export const developersApi = {
       body: JSON.stringify({ name: input.name.trim() }),
     });
     if (!res.ok) throw new Error(await parseErrorMessage(res));
-    const created = (await res.json()) as DeveloperItem;
-    if (created?.id && created?.name) {
+    const created = await tryReadJsonObject<DeveloperItem>(res);
+    if (created?.id && typeof created.name === "string") {
       developersState = [...developersState.filter((d) => d.id !== created.id), created];
       emit();
     }
