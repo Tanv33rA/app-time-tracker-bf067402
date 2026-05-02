@@ -57,18 +57,61 @@ async function parseErrorMessage(res: Response): Promise<string> {
   return `Request failed with status ${res.status}`;
 }
 
+/** Read body as JSON array, or null if the server returned HTML (e.g. SPA index) or invalid JSON. */
+async function tryReadJsonArray<T>(res: Response): Promise<T[] | null> {
+  const text = await res.text();
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("<")) return null;
+  try {
+    const data = JSON.parse(text) as unknown;
+    return Array.isArray(data) ? (data as T[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+const proxyHint =
+  "Check that all /api requests are reverse-proxied to the Node API (not the static site).";
+
 async function syncFromServer() {
   const [appsRes, developersRes] = await Promise.all([
     fetch("/api/apps"),
     fetch("/api/developers"),
   ]);
-  if (!appsRes.ok) throw new Error(await parseErrorMessage(appsRes));
-  if (!developersRes.ok) throw new Error(await parseErrorMessage(developersRes));
 
-  const apps = (await appsRes.json()) as AppItem[];
-  const developers = (await developersRes.json()) as DeveloperItem[];
-  developersState = developers;
-  setState(apps);
+  const errors: string[] = [];
+  let appsUpdated = false;
+  let devsUpdated = false;
+
+  if (appsRes.ok) {
+    const apps = await tryReadJsonArray<AppItem>(appsRes);
+    if (apps !== null) {
+      state = apps;
+      appsUpdated = true;
+    } else {
+      errors.push(`GET /api/apps returned non-JSON (${proxyHint})`);
+    }
+  } else {
+    errors.push(`Apps: ${await parseErrorMessage(appsRes)}`);
+  }
+
+  if (developersRes.ok) {
+    const developers = await tryReadJsonArray<DeveloperItem>(developersRes);
+    if (developers !== null) {
+      developersState = developers;
+      devsUpdated = true;
+    } else {
+      errors.push(`GET /api/developers returned non-JSON (${proxyHint})`);
+    }
+  } else {
+    errors.push(`Developers: ${await parseErrorMessage(developersRes)}`);
+  }
+
+  emit();
+
+  if (!appsUpdated && !devsUpdated) {
+    throw new Error(errors.join(" ") || "Could not load data from the server.");
+  }
 }
 
 async function postAction(url: string, method: "POST" | "DELETE" = "POST") {
@@ -167,6 +210,11 @@ export const developersApi = {
       body: JSON.stringify({ name: input.name.trim() }),
     });
     if (!res.ok) throw new Error(await parseErrorMessage(res));
+    const created = (await res.json()) as DeveloperItem;
+    if (created?.id && created?.name) {
+      developersState = [...developersState.filter((d) => d.id !== created.id), created];
+      emit();
+    }
     await syncFromServer();
   },
   async archive(id: string) {
